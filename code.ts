@@ -1,5 +1,3 @@
-figma.showUI(__html__);
-
 async function displayTextStyleVariables() {
   try {
     await figma.loadFontAsync({ family: "Inter", style: "Regular" });
@@ -9,18 +7,23 @@ async function displayTextStyleVariables() {
 
     if (textStyles.length === 0) {
       figma.notify("No text styles found.");
+      figma.closePlugin();
       return;
     }
 
     const modeNames = getModeNames();
-
+    console.log("Mode Names:", modeNames);
 
     // After initial processing, resolve variable values recursively
     resolveVariableValuesRecursively(textStyles, modeNames);
 
+    figma.notify("Text style variables displayed on canvas.");
+    figma.closePlugin();
+
   } catch (error) {
     console.error("Error displaying text style variables:", error);
     figma.notify("An error occurred while displaying text style variables.");
+    figma.closePlugin();
   }
 }
 
@@ -39,12 +42,22 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
   for (const textStyle of textStyles) {
     const boundVariables = textStyle.boundVariables;
     if (boundVariables) {
+      // Create and append the text style name once per text style
+      const textNode1 = figma.createText();
+      textNode1.fontName = { family: "Inter", style: "Regular" };
+      textNode1.fontSize = 24;
+      textNode1.characters = `${textStyle.name}`;
+      frame.appendChild(textNode1);
+
       for (const [property, variableAlias] of Object.entries(boundVariables)) {
         const variableId = (variableAlias as any).id; // Adjust this line based on the actual structure
         const resolvedValue = resolveVariableValue(variableId, modeNames);
-        const textNode = figma.createText();
-        textNode.characters = `Resolved Value for ${textStyle.name}, Property: ${property}: ${resolvedValue}`;
-        frame.appendChild(textNode);
+
+        const textNode2 = figma.createText();
+        textNode2.fontName = { family: "Inter", style: "Regular" };
+        textNode2.characters = `${property}:\n${resolvedValue}`;
+        frame.appendChild(textNode2);
+
         console.log(`Resolved Value for ${textStyle.name}, Property: ${property}: ${resolvedValue}`);
       }
     }
@@ -54,7 +67,7 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
   figma.viewport.scrollAndZoomIntoView([frame]);
 }
 
-function resolveVariableValue(variableId: string, modeNames: Record<string, string>): any {
+function resolveVariableValue(variableId: string, modeNames: Record<string, string>): string {
   const variable = figma.variables.getVariableById(variableId);
   if (!variable) {
     return "Variable not found";
@@ -63,15 +76,16 @@ function resolveVariableValue(variableId: string, modeNames: Record<string, stri
   const valuesByMode = variable.valuesByMode;
   let resolvedValue = "";
   for (const [modeId, value] of Object.entries(valuesByMode)) {
-    const modeName = modeNames[modeId] || modeId; // Use mode name if available
+    let modeName = modeNames[modeId] || `Unknown Mode (${modeId})`; // Use mode name if available
+    modeName = modeName.replace(/^Default:\s*/, ''); // Remove 'Default:' prefix if present
     if (typeof value === 'object' && value !== null) {
       // If the value is another variable, resolve it recursively
-      resolvedValue += `Mode: ${modeName}, Value: ${resolveVariableValue((value as any).id, modeNames)}; `;
+      resolvedValue += `${modeName}: ${resolveVariableValue((value as any).id, modeNames)}\n`;
     } else {
-      resolvedValue += `Mode: ${modeName}, Value: ${value}; `;
+      resolvedValue += `${modeName}: ${value}\n`;
     }
   }
-  return resolvedValue;
+  return resolvedValue.trim();
 }
 
 function getModeNames(): Record<string, string> {
