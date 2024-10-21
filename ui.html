@@ -1,63 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-    }
-    select {
-      width: 100%;
-      padding: 8px;
-      margin-bottom: 20px;
-    }
-    button {
-      padding: 10px 20px;
-      background-color: #007bff;
-      color: white;
-      border: none;
-      cursor: pointer;
-    }
-    button:hover {
-      background-color: #0056b3;
-    }
-  </style>
+  <meta charset="UTF-8">
+  <title>Text Style Variable Viewer</title>
 </head>
 <body>
-  <h3>Select a Variable Collection</h3>
-  <select id="collectionSelect">
-    <!-- Options will be populated dynamically -->
-  </select>
-  <button id="generateButton">Generate Output</button>
-  <button id="cancelButton">Cancel</button>
-
-  <script>
-    // Listen for messages from the plugin
-    window.onmessage = (event) => {
-      const message = event.data.pluginMessage;
-      if (message.type === 'populate-collections') {
-        const select = document.getElementById('collectionSelect');
-        select.innerHTML = ''; // Clear existing options
-        message.collections.forEach(collection => {
-          const option = document.createElement('option');
-          option.value = collection.id;
-          option.textContent = collection.name;
-          select.appendChild(option);
-        });
-      }
-    };
-
-    // Send the selected collection ID back to the plugin
-    document.getElementById('generateButton').onclick = () => {
-      const select = document.getElementById('collectionSelect');
-      const selectedCollectionId = select.value;
-      parent.postMessage({ pluginMessage: { type: 'select-collection', collectionId: selectedCollectionId } }, '*');
-    };
-
-    // Handle cancel button
-    document.getElementById('cancelButton').onclick = () => {
-      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
-    };
-  </script>
+  <h1>Text Style Variable Viewer</h1>
+  <p>This plugin displays the values of variables assigned to text styles across all modes on the Figma canvas.</p>
 </body>
 </html>
