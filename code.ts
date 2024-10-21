@@ -35,7 +35,7 @@ async function displayTextStyleVariables() {
 function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Record<string, string>) {
   // Create a new frame to contain the text nodes
   const frame = figma.createFrame();
-  frame.name = "Resolved Variable Values";
+  frame.name = "Text Style Properties";
   frame.layoutMode = "VERTICAL";
   frame.counterAxisSizingMode = "AUTO";
   frame.primaryAxisSizingMode = "AUTO";
@@ -47,7 +47,7 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
 
   // Iterate over each text style
   for (const textStyle of textStyles) {
-    const boundVariables = textStyle.boundVariables;
+    const boundVariables =  textStyle.boundVariables;
     if (boundVariables) {
       // Create a text node for the text style name and append it to the frame
       const textNode1 = figma.createText();
