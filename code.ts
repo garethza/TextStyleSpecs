@@ -47,9 +47,9 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
 
   // Iterate over each text style
   for (const textStyle of textStyles) {
-    const boundVariables =  textStyle.boundVariables;
+    const boundVariables = textStyle.boundVariables;
     if (boundVariables) {
-      // Create a text node for the text style name and append it to the frame
+      // Create a text node for the text style name
       const textNode1 = figma.createText();
       textNode1.fontName = { family: "Inter", style: "Regular" };
       textNode1.fontSize = 24;
@@ -61,10 +61,14 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
         const variableId = (variableAlias as any).id; // Get the variable ID
         const resolvedValue = resolveVariableValue(variableId, modeNames); // Resolve the variable value
 
-        // Create a text node for the property and its resolved value, then append it to the frame
+        // Replace the property name if a replacement exists
+        const replacedProperty = replaceProperty(property);
+        console.log(`Original Property: ${property}, Replaced Property: ${replacedProperty}`); // Debug log
+
+        // Create a text node for the replaced property and its resolved value
         const textNode2 = figma.createText();
         textNode2.fontName = { family: "Inter", style: "Regular" };
-        textNode2.characters = `${property}:\n${resolvedValue}`;
+        textNode2.characters = `${replacedProperty}:\n${resolvedValue}`;
         frame.appendChild(textNode2);
       }
     }
@@ -104,6 +108,25 @@ function resolveVariableValue(variableId: string, modeNames: Record<string, stri
     resolvedValue = resolvedValue.replace(/^Default:\s*/, '');
   }
   return resolvedValue.trim(); // Trim any trailing whitespace
+}
+
+function replaceProperty(property: string): string {
+  // Define a mapping of original property names to their replacements
+  const propertyReplacements: Record<string, string> = {
+    "fontSize": "Font Size",
+    "fontFamily": "Font Family",
+    "lineHeight": "Line Height",
+    "fontWeight": "Font Weight",
+    "letterSpacing": "Letter Spacing",
+    "paragraphSpacing": "Paragraph Spacing",
+    // Add more replacements as needed
+  };
+
+  // Log the property and its replacement for debugging
+  console.log(`Original Property: ${property}, Replaced Property: ${propertyReplacements[property] || property}`);
+
+  // Return the replacement if it exists, otherwise return the original property
+  return propertyReplacements[property] || property;
 }
 
 function getModeNames(): Record<string, string> {
