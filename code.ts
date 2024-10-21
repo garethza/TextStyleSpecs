@@ -59,14 +59,138 @@ function formatLineHeight(lineHeight: LineHeight | VariableAlias): string {
   }
 }
 
-async function createTextNodes() {
+function getAssignedVariableName(style: TextStyle): string {
+  if (style.boundVariables && style.boundVariables.fontSize) {
+    const fontSizeVariable = figma.variables.getVariableById(style.boundVariables.fontSize.id);
+    return fontSizeVariable ? fontSizeVariable.name : 'Unknown Variable';
+  }
+  return 'None';
+}
+
+function getVariableValue(variableId: string, mode: string): { name: string, value: any } | null {
+  console.log(`Debug - getVariableValue called with variableId: ${variableId}, mode: ${mode}`);
+  const variable = figma.variables.getVariableById(variableId);
+  if (!variable) {
+    console.log(`Debug - Variable not found for id: ${variableId}`);
+    return null;
+  }
+
+  let currentName = variable.name;
+  let currentValue = variable.valuesByMode[mode];
+  let depth = 0;
+  const maxDepth = 10; // Prevent infinite loops
+
+  while (typeof currentValue === 'object' && currentValue !== null && 'type' in currentValue && currentValue.type === 'VARIABLE_ALIAS' && depth < maxDepth) {
+    console.log(`Debug - Value is an alias, resolving... (depth: ${depth})`);
+    const resolvedVariable = figma.variables.getVariableById(currentValue.id);
+    if (!resolvedVariable) {
+      console.log(`Debug - Aliased variable not found for id: ${currentValue.id}`);
+      return null;
+    }
+    currentName += ` → ${resolvedVariable.name}`;
+    currentValue = resolvedVariable.valuesByMode[mode];
+    console.log(`Debug - Resolved to:`, currentValue);
+    depth++;
+  }
+
+  if (depth === maxDepth) {
+    console.log(`Debug - Max depth reached, possible circular reference`);
+    return { name: currentName, value: 'Circular Reference' };
+  }
+
+  if (currentValue === undefined) {
+    console.log(`Debug - No value defined for mode ${mode}`);
+    return null;
+  }
+
+  console.log(`Debug - Final resolved value:`, currentValue);
+  return { name: currentName, value: currentValue };
+}
+
+// Define a constant to limit the number of text styles processed
+const TEXT_STYLE_LIMIT = 5;
+
+function getRawVariableValue(variableInfo: { name: string, value: any } | null, mode: string): any {
+  if (!variableInfo) {
+    console.log(`Variable info is null`);
+    return null;
+  }
+
+  let currentValue = variableInfo.value;
+  let depth = 0;
+  const maxDepth = 10; // Prevent infinite loops
+
+  while (typeof currentValue === 'object' && currentValue !== null && 'type' in currentValue && currentValue.type === 'VARIABLE_ALIAS' && depth < maxDepth) {
+    const resolvedVariable = figma.variables.getVariableById(currentValue.id);
+    if (!resolvedVariable) {
+      console.log(`Aliased variable not found for id: ${currentValue.id}`);
+      return 'Aliased variable not found';
+    }
+    currentValue = resolvedVariable.valuesByMode[mode];
+    depth++;
+  }
+
+  if (depth === maxDepth) {
+    console.log(`Max depth reached, possible circular reference`);
+    return 'Circular Reference';
+  }
+
+  return currentValue;
+}
+
+function getRawVariableValuesAcrossModes(variableId: string): { modeName: string, rawValue: any }[] {
+  const variable = figma.variables.getVariableById(variableId);
+  if (!variable) {
+    console.log(`Variable not found for id: ${variableId}`);
+    return [];
+  }
+
+  const modeValues: { modeName: string, rawValue: any }[] = [];
+  const modeMap = figma.variables.getLocalVariableCollections()
+    .reduce((acc: { [key: string]: string }, collection) => {
+      collection.modes.forEach(mode => {
+        acc[mode.name] = mode.modeId;
+      });
+      return acc;
+    }, {});
+
+  for (const modeName in modeMap) {
+    const modeId = modeMap[modeName];
+    let currentValue = variable.valuesByMode[modeId];
+    let depth = 0;
+    const maxDepth = 10; // Prevent infinite loops
+
+    while (typeof currentValue === 'object' && currentValue !== null && 'type' in currentValue && currentValue.type === 'VARIABLE_ALIAS' && depth < maxDepth) {
+      const resolvedVariable = figma.variables.getVariableById(currentValue.id);
+      if (!resolvedVariable) {
+        console.log(`Aliased variable not found for id: ${currentValue.id}`);
+        currentValue = 'Aliased variable not found';
+        break;
+      }
+      currentValue = resolvedVariable.valuesByMode[modeId];
+      depth++;
+    }
+
+    if (depth === maxDepth) {
+      console.log(`Max depth reached, possible circular reference`);
+      currentValue = 'Circular Reference';
+    }
+
+    modeValues.push({ modeName, rawValue: currentValue });
+  }
+
+  return modeValues;
+}
+
+async function createTextNodes(rawValues: { modeName: string, rawValue: any }[]) {
   try {
+    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+
     const textStyles = await getTextStyles();
     console.log(`Found ${textStyles.length} text styles`);
     figma.notify(`Found ${textStyles.length} text styles`);
     
     if (textStyles.length > 0) {
-      // Create a single auto layout frame
       const frame = figma.createFrame();
       frame.name = "Text Styles";
       frame.layoutMode = 'VERTICAL';
@@ -74,31 +198,31 @@ async function createTextNodes() {
       frame.counterAxisSizingMode = 'AUTO';
       frame.x = 100;
       frame.y = 100;
-      frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]; // White background
-      frame.paddingLeft = frame.paddingRight = frame.paddingTop = frame.paddingBottom = 16; // Add some padding
-      frame.itemSpacing = 20; // Add spacing between text nodes
+      frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+      frame.paddingLeft = frame.paddingRight = frame.paddingTop = frame.paddingBottom = 16;
+      frame.itemSpacing = 20;
 
-      // Get all modes in the document
-      const modes = figma.variables.getLocalVariableCollections()
-        .reduce((acc: string[], collection) => {
-          return acc.concat(collection.modes.map(mode => mode.name));
-        }, []);
+      // Get all modes and their identifiers
+      const modeMap = figma.variables.getLocalVariableCollections()
+        .reduce((acc: { [key: string]: string }, collection) => {
+          collection.modes.forEach(mode => {
+            acc[mode.name] = mode.modeId; // Map mode name to mode id
+          });
+          return acc;
+        }, {});
 
-      for (let index = 0; index < textStyles.length; index++) {
-        console.log(`Processing style ${index + 1} of ${textStyles.length}`);
-        figma.notify(`Processing style ${index + 1} of ${textStyles.length}`);
-        const style = textStyles[index];
+      // Limit the number of text styles processed
+      const stylesToProcess = textStyles.slice(0, TEXT_STYLE_LIMIT);
+
+      for (let index = 0; index < stylesToProcess.length; index++) {
+        console.log(`Processing style ${index + 1} of ${stylesToProcess.length}`);
+        figma.notify(`Processing style ${index + 1} of ${stylesToProcess.length}`);
+        const style = stylesToProcess[index];
         
-        console.log('Loading font...');
-        try {
-          await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
-          console.log('Font loaded successfully');
-        } catch (error) {
-          console.error(`Error loading font:`, error);
-          continue;
+        if (style.fontName) {
+          await figma.loadFontAsync(style.fontName);
         }
 
-        console.log('Creating text node...');
         const rowFrame = figma.createFrame();
         rowFrame.name = `Style: ${style.name}`;
         rowFrame.layoutMode = 'HORIZONTAL';
@@ -109,6 +233,7 @@ async function createTextNodes() {
 
         const baseInfoNode = figma.createText();
         baseInfoNode.name = "Base Info";
+        baseInfoNode.fontName = { family: "Inter", style: "Regular" };
         baseInfoNode.textAutoResize = "WIDTH_AND_HEIGHT";
         baseInfoNode.characters = `
 Style Name: ${style.name}
@@ -122,46 +247,64 @@ Line Height: ${formatLineHeight(style.lineHeight)}
         baseInfoNode.textAlignHorizontal = 'LEFT';
         baseInfoNode.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
         
-        // Set an initial width, then resize to fit content
         baseInfoNode.resize(300, baseInfoNode.height);
         baseInfoNode.resize(baseInfoNode.width, baseInfoNode.height);
         
         rowFrame.appendChild(baseInfoNode);
 
-        // Add columns for each mode
-        for (const mode of modes) {
+        for (const modeName in modeMap) {
+          const modeId = modeMap[modeName];
           const modeNode = figma.createText();
-          modeNode.name = `Mode: ${mode}`;
+          modeNode.name = `Mode: ${modeName}`;
+          modeNode.fontName = { family: "Inter", style: "Regular" };
           modeNode.textAutoResize = "WIDTH_AND_HEIGHT";
-          modeNode.characters = `Mode: ${mode}\n`;
-          // Get variable values for this mode
-          for (const key in style) {
-            const value = style[key];
-            if (key === 'fontSize') {
-              if (typeof value === 'object' && value !== null && 'type' in value && value.type === 'VARIABLE_ALIAS') {
-                const variable = figma.variables.getVariableById(value.id);
-                if (variable) {
-                  const modeValue = variable.valuesByMode[mode];
-                  modeNode.characters += `Font Size: ${modeValue !== undefined ? `${modeValue}px` : '[Not set]'}\n`;
-                }
-              } else {
-                // If fontSize is not a variable, use the base value for all modes
-                modeNode.characters += `Font Size: ${value}px\n`;
-              }
-            } else if (typeof value === 'object' && value !== null && 'type' in value && value.type === 'VARIABLE_ALIAS') {
-              const variable = figma.variables.getVariableById(value.id);
-              if (variable) {
-                const modeValue = variable.valuesByMode[mode];
-                modeNode.characters += `${key}: ${modeValue !== undefined ? modeValue : '[Not set]'}\n`;
-              }
+
+          const modeStyle = await figma.getStyleByIdAsync(style.id) as TextStyle | null;
+          
+          console.log(`Debug - Mode: ${modeName}, Style ID: ${style.id}`);
+          console.log(`Debug - ModeStyle:`, modeStyle);
+
+          if (modeStyle) {
+            if (modeStyle.fontName) {
+              await figma.loadFontAsync(modeStyle.fontName);
             }
+
+            let fontSizeInfo = 'Unknown';
+            let assignedVariableName = getAssignedVariableName(modeStyle);
+
+            console.log(`Debug - Assigned Variable Name: ${assignedVariableName}`);
+            console.log(`Debug - Bound Variables:`, modeStyle.boundVariables);
+
+            if (modeStyle.boundVariables && modeStyle.boundVariables.fontSize) {
+              console.log(`Debug - Font size is bound to a variable`);
+              const variableInfo = getVariableValue(modeStyle.boundVariables.fontSize.id, modeId);
+              console.log(`Debug - Variable Info:`, variableInfo);
+              if (variableInfo) {
+                fontSizeInfo = `${variableInfo.name}: ${variableInfo.value}px`;
+                console.log(`Debug - Font Size Info: ${fontSizeInfo}`);
+              } else {
+                fontSizeInfo = 'No value defined for this mode';
+              }
+            } else if (typeof modeStyle.fontSize === "number") {
+              console.log(`Debug - Font size is a direct value: ${modeStyle.fontSize}`);
+              fontSizeInfo = `Direct value: ${modeStyle.fontSize}px`;
+            } else {
+              console.log(`Debug - Unexpected font size type:`, modeStyle.fontSize);
+              fontSizeInfo = `Unexpected type: ${typeof modeStyle.fontSize}`;
+            }
+
+            modeNode.characters = `Mode: ${modeName}\n`;
+            modeNode.characters += `Assigned Variable: ${assignedVariableName}\n`;
+            modeNode.characters += `Font Size: ${fontSizeInfo}\n`;
+          } else {
+            modeNode.characters = `Mode: ${modeName}\nStyle not available for this mode`;
+            console.log(`Debug - Style not available for mode: ${modeName}`);
           }
 
           modeNode.fontSize = 14;
           modeNode.textAlignHorizontal = 'LEFT';
           modeNode.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
           
-          // Set an initial width, then resize to fit content
           modeNode.resize(200, modeNode.height);
           modeNode.resize(modeNode.width, modeNode.height);
           
@@ -169,17 +312,49 @@ Line Height: ${formatLineHeight(style.lineHeight)}
         }
 
         frame.appendChild(rowFrame);
-        console.log('Row created and styled successfully');
       }
 
-      // After adding all rows, resize the frame to fit its contents
-      frame.resize(
-        frame.width,
-        frame.height
-      );
+      // Create a new frame for raw variable values
+      const rawValuesFrame = figma.createFrame();
+      rawValuesFrame.name = "Raw Variable Values";
+      rawValuesFrame.layoutMode = 'VERTICAL';
+      rawValuesFrame.primaryAxisSizingMode = 'AUTO';
+      rawValuesFrame.counterAxisSizingMode = 'AUTO';
+      rawValuesFrame.x = frame.x + frame.width + 50; // Position it next to the main frame
+      rawValuesFrame.y = frame.y;
+      rawValuesFrame.fills = [{ type: 'SOLID', color: { r: 0.9, g: 0.9, b: 0.9 } }];
+      rawValuesFrame.paddingLeft = rawValuesFrame.paddingRight = rawValuesFrame.paddingTop = rawValuesFrame.paddingBottom = 16;
+      rawValuesFrame.itemSpacing = 10;
 
-      figma.currentPage.selection = [frame];
-      figma.viewport.scrollAndZoomIntoView([frame]);
+      // Populate the raw values frame
+      for (let index = 0; index < stylesToProcess.length; index++) {
+        const style = stylesToProcess[index];
+        const rawValueNode = figma.createText();
+        rawValueNode.fontName = { family: "Inter", style: "Regular" };
+        rawValueNode.textAutoResize = "WIDTH_AND_HEIGHT";
+
+        let rawValueText = `Style: ${style.name}\n`;
+
+        for (const modeName in modeMap) {
+          const modeId = modeMap[modeName];
+          if (style.boundVariables && style.boundVariables.fontSize) {
+            const variableInfo = getVariableValue(style.boundVariables.fontSize.id, modeId);
+            const rawValue = getRawVariableValue(variableInfo, modeId);
+            rawValueText += `Mode: ${modeName}, Raw Value: ${rawValue}\n`;
+          }
+        }
+
+        rawValueNode.characters = rawValueText;
+        rawValueNode.fontSize = 14;
+        rawValueNode.textAlignHorizontal = 'LEFT';
+        rawValueNode.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+
+        rawValuesFrame.appendChild(rawValueNode);
+      }
+
+      figma.currentPage.appendChild(frame);
+      figma.currentPage.appendChild(rawValuesFrame);
+      figma.viewport.scrollAndZoomIntoView([frame, rawValuesFrame]);
     } else {
       figma.notify("No text styles defined in this file.");
     }
@@ -189,13 +364,94 @@ Line Height: ${formatLineHeight(style.lineHeight)}
   }
 }
 
-// Run the main function and then close the plugin
-createTextNodes().then(() => {
-  console.log("Plugin execution completed.");
-  figma.notify("Plugin execution completed.");
-  figma.closePlugin();
-}).catch((error) => {
-  console.error("Error running plugin:", error);
-  figma.notify("An error occurred while running the plugin.");
-  figma.closePlugin();
-});
+// Add a cancel button
+figma.showUI(__html__, { width: 300, height: 200 });
+
+// Send available collections to the UI
+const collections = figma.variables.getLocalVariableCollections().map(collection => ({
+  id: collection.id,
+  name: collection.name
+}));
+
+figma.ui.postMessage({ type: 'populate-collections', collections });
+
+// Function to resolve a variable value, handling aliases
+function resolveVariableValue(variableId: string, modeId: string): any {
+  let currentValue = figma.variables.getVariableById(variableId)?.valuesByMode[modeId];
+  let depth = 0;
+  const maxDepth = 10; // Prevent infinite loops
+
+  while (typeof currentValue === 'object' && currentValue !== null && 'type' in currentValue && currentValue.type === 'VARIABLE_ALIAS' && depth < maxDepth) {
+    const resolvedVariable = figma.variables.getVariableById(currentValue.id);
+    if (!resolvedVariable) {
+      console.log(`Aliased variable not found for id: ${currentValue.id}`);
+      return 'Aliased variable not found';
+    }
+    currentValue = resolvedVariable.valuesByMode[modeId];
+    depth++;
+  }
+
+  if (depth === maxDepth) {
+    console.log(`Max depth reached, possible circular reference`);
+    return 'Circular Reference';
+  }
+
+  return currentValue;
+}
+
+figma.ui.onmessage = async (msg) => {
+  if (msg.type === 'select-collection') {
+    const collectionId = msg.collectionId;
+    const collection = figma.variables.getLocalVariableCollections().find(c => c.id === collectionId);
+    if (collection) {
+      if (!collection.variableIds || collection.variableIds.length === 0) {
+        figma.notify("No variables found in the selected collection.");
+        return;
+      }
+
+      // Create a frame to display all variables
+      const rawValuesFrame = figma.createFrame();
+      rawValuesFrame.name = "Variables in Collection";
+      rawValuesFrame.layoutMode = 'VERTICAL';
+      rawValuesFrame.primaryAxisSizingMode = 'AUTO';
+      rawValuesFrame.counterAxisSizingMode = 'AUTO';
+      rawValuesFrame.x = 100;
+      rawValuesFrame.y = 100;
+      rawValuesFrame.fills = [{ type: 'SOLID', color: { r: 0.9, g: 0.9, b: 0.9 } }];
+      rawValuesFrame.paddingLeft = rawValuesFrame.paddingRight = rawValuesFrame.paddingTop = rawValuesFrame.paddingBottom = 16;
+      rawValuesFrame.itemSpacing = 10;
+
+      // Iterate over each variable in the collection
+      for (const variableId of collection.variableIds) {
+        const variable = figma.variables.getVariableById(variableId);
+        if (variable) {
+          const modeId = figma.variables.getLocalVariableCollections().find(c => c.id === collectionId)?.modes[0]?.modeId || '';
+          const resolvedValue = resolveVariableValue(variableId, modeId);
+
+          const variableNode = figma.createText();
+          await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+          variableNode.fontName = { family: "Inter", style: "Regular" };
+          variableNode.textAutoResize = "WIDTH_AND_HEIGHT";
+          variableNode.characters = `
+            Variable Name: ${variable.name}
+            Variable ID: ${variable.id}
+            Resolved Value: ${resolvedValue}
+          `.trim();
+          variableNode.fontSize = 14;
+          variableNode.textAlignHorizontal = 'LEFT';
+          variableNode.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+
+          rawValuesFrame.appendChild(variableNode);
+        }
+      }
+
+      figma.currentPage.appendChild(rawValuesFrame);
+      figma.viewport.scrollAndZoomIntoView([rawValuesFrame]);
+
+      figma.notify("Variables displayed in the frame.");
+    }
+  } else if (msg.type === 'cancel') {
+    figma.closePlugin("Plugin cancelled by user");
+  }
+};
+
