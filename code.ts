@@ -45,16 +45,39 @@ function resolveVariableValuesRecursively(textStyles: TextStyle[], modeNames: Re
   frame.paddingRight = 10;
   frame.itemSpacing = 10;
 
+  const componentTSHeading = figma.createComponent();
+  componentTSHeading.name = "Text Style Heading";
+  componentTSHeading.layoutMode = "VERTICAL";
+  componentTSHeading.counterAxisSizingMode = "AUTO";
+  componentTSHeading.primaryAxisSizingMode = "AUTO";
+
+      // Create a text node for the text style name
+  const textNode1 = figma.createText();
+  textNode1.fontName = { family: "Inter", style: "Regular" };
+  textNode1.fontSize = 24;
+  textNode1.characters = "Text Style Heading";
+  textNode1.textAutoResize = "WIDTH_AND_HEIGHT";
+  componentTSHeading.appendChild(textNode1);
+
+
   // Iterate over each text style
   for (const textStyle of textStyles) {
     const boundVariables = textStyle.boundVariables;
     if (boundVariables) {
-      // Create a text node for the text style name
-      const textNode1 = figma.createText();
-      textNode1.fontName = { family: "Inter", style: "Regular" };
-      textNode1.fontSize = 24;
-      textNode1.characters = `${textStyle.name}`;
-      frame.appendChild(textNode1);
+
+      const instance = componentTSHeading.createInstance();
+      frame.appendChild(instance);
+
+      // Find the text node within the instance
+      const instanceTextNode = instance.findOne(node => node.type === "TEXT") as TextNode;
+
+      if (instanceTextNode) {
+        // Update the text node's characters
+        instanceTextNode.characters = `${textStyle.name}`;
+        console.log("Text node updated in the instance.");
+      } else {
+        console.log("Text node not found in the instance.");
+      }
 
       // Iterate over each bound variable in the text style
       for (const [property, variableAlias] of Object.entries(boundVariables)) {
